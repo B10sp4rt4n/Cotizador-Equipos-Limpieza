@@ -124,7 +124,19 @@ class CotizadorKarcher:
         try:
             df = pd.read_excel(archivo)
             df = df.rename(columns=lambda x: str(x).strip().upper())
-            df = df.rename(columns={"PRECIO MXN": "PRECIO_LISTA"})
+            # Intentar múltiples variantes de nombres de columna para precio
+            if "PRECIO MXN" in df.columns:
+                df = df.rename(columns={"PRECIO MXN": "PRECIO_LISTA"})
+            elif "PRECIO" in df.columns:
+                df = df.rename(columns={"PRECIO": "PRECIO_LISTA"})
+            elif "PRICE" in df.columns:
+                df = df.rename(columns={"PRICE": "PRECIO_LISTA"})
+            
+            # Verificar que existan las columnas necesarias
+            if "PRECIO_LISTA" not in df.columns:
+                st.error(f"No se encontró la columna de precio. Columnas disponibles: {list(df.columns)}")
+                return None
+            
             self.df = df
             return df
         except Exception as e:
