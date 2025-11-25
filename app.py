@@ -123,7 +123,7 @@ class CotizadorKarcher:
     def cargar_archivo(self, archivo):
         try:
             df = pd.read_excel(archivo)
-            df = df.rename(columns=lambda x: str(x).strip().upper())
+            df = df.rename(columns=lambda x: str(x).strip().replace('\n', ' ').upper())
             # Intentar múltiples variantes de nombres de columna para precio
             if "PRECIO MXN" in df.columns:
                 df = df.rename(columns={"PRECIO MXN": "PRECIO_LISTA"})
