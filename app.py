@@ -259,23 +259,3 @@ if archivo:
                 # Guardar cotización en la base de datos
                 db.guardar_cotizacion(resultado, usuario="streamlit")
 
-############################################################
-#   EJEMPLO DE USO REAL (CLI)
-############################################################
-if __name__ == "__main__":
-    db = DBKarcher()
-    cot = CotizadorKarcher(descuento_fabricante=0.32)
-
-    ruta = "/mnt/data/LP Div Prof Hoja 2 Sep25.xlsx"   # <-- tu archivo cargado
-    df = cot.cargar_archivo(ruta)
-
-    db.cargar_catalogo(df, usuario="Salvador")
-
-    resultado = cot.calcular_precio(
-        numero_parte=df["NO. DE PARTE"].iloc[0],
-        margen_sobre_costo=0.25
-    )
-
-    print(resultado)
-
-    db.guardar_cotizacion(resultado, usuario="Salvador")
