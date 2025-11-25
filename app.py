@@ -163,6 +163,7 @@ class CotizadorKarcher:
 
         # Cálculo por margen
         if margen_sobre_costo is not None:
+            # Margen sobre precio final: Precio Final = Costo / (1 - Margen)
             precio_final = costo_base / (1 - margen_sobre_costo)
 
         # Cálculo por precio objetivo
@@ -172,7 +173,9 @@ class CotizadorKarcher:
         else:
             return {"error": "Debes especificar margen_sobre_costo o precio_objetivo"}
 
-        margen_real_sobre_costo = (precio_final - costo_base) / costo_base
+        # Calcular métricas reales
+        margen_real_sobre_precio = ((precio_final - costo_base) / precio_final) * 100 if precio_final > 0 else 0
+        margen_real_sobre_costo = ((precio_final - costo_base) / costo_base) * 100 if costo_base > 0 else 0
         descuento_visible = 1 - (precio_final / precio_lista)
 
         alerta = None
@@ -184,7 +187,8 @@ class CotizadorKarcher:
             "PRECIO_LISTA": precio_lista,
             "COSTO_BASE": round(costo_base, 2),
             "PRECIO_FINAL": round(precio_final, 2),
-            "MARGEN_REAL_COSTO": round(margen_real_sobre_costo * 100, 2),
+            "MARGEN_REAL_PRECIO": round(margen_real_sobre_precio, 2),
+            "MARGEN_REAL_COSTO": round(margen_real_sobre_costo, 2),
             "DESCUENTO_VISIBLE": round(descuento_visible * 100, 2),
             "ALERTA": alerta
         }
@@ -242,12 +246,12 @@ if df is not None:
         descuento_fab = st.number_input("Descuento del fabricante (%)", min_value=0.0, max_value=100.0, value=30.0, step=1.0)
         cotizador.descuento_fabricante = descuento_fab / 100
 
-        modo = st.radio("Método de cálculo:", ["Margen sobre costo", "Precio objetivo"])
+        modo = st.radio("Método de cálculo:", ["Margen sobre precio", "Precio objetivo"])
 
         margen = None
         precio_objetivo = None
 
-        if modo == "Margen sobre costo":
+        if modo == "Margen sobre precio":
             margen = st.number_input("Margen deseado (%)", min_value=0.0, max_value=100.0, value=25.0, step=1.0) / 100
         else:
             precio_objetivo = st.number_input("Precio objetivo (MXN)", min_value=0.0, step=1.0)
@@ -268,8 +272,9 @@ if df is not None:
                 col1.metric("Precio Lista", f"${resultado['PRECIO_LISTA']:,}")
                 col2.metric("Costo Base", f"${resultado['COSTO_BASE']:,}")
                 col3.metric("Precio Final", f"${resultado['PRECIO_FINAL']:,}")
-                col4.metric("Margen Real (%)", f"{resultado['MARGEN_REAL_COSTO']}%")
+                col4.metric("Margen s/Precio (%)", f"{resultado['MARGEN_REAL_PRECIO']}%")
 
+                st.write(f"**Margen sobre costo:** {resultado['MARGEN_REAL_COSTO']}%")
                 st.write(f"**Descuento visible sobre lista:** {resultado['DESCUENTO_VISIBLE']}%")
 
                 if resultado.get("ALERTA"):
