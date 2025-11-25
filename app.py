@@ -185,37 +185,45 @@ cotizador = CotizadorKarcher()
 # -------------------------
 # Subir archivo
 # -------------------------
+
+# Subir archivo
 archivo = st.file_uploader("Sube la lista de precios", type=["xlsx"])
 
+# Intentar cargar automáticamente el archivo si existe en el repositorio
+default_xlsx = "LP Div Prof Hoja 2 Sep25.xlsx"
+df = None
+if os.path.exists(default_xlsx):
+    df = cotizador.cargar_archivo(default_xlsx)
+    if df is not None:
+        db.cargar_catalogo(df, usuario="auto-repo")
 
+# Si el usuario sube un archivo, se sobreescribe el DataFrame
 if archivo:
     df = cotizador.cargar_archivo(archivo)
     if df is not None:
         st.success("Archivo cargado correctamente.")
         st.dataframe(df, height=300)
-        # Guardar catálogo en la base de datos
         db.cargar_catalogo(df, usuario="streamlit")
 
+# Buscador dinámico de inicio si hay lista cargada
+if df is not None:
+    st.markdown("### 🔍 Buscar y cotizar producto")
+    busqueda = st.text_input("Buscar por No. de Parte, Modelo o Descripción")
 
-        # Búsqueda inteligente en catálogo
-        st.markdown("### Buscar producto en catálogo")
-        busqueda = st.text_input("Buscar por No. de Parte, Modelo o Descripción")
+    if busqueda:
+        filtro = df[
+            df["NO. DE PARTE"].astype(str).str.contains(busqueda, case=False, na=False) |
+            df.get("MODELO", pd.Series(["" for _ in range(len(df))])).astype(str).str.contains(busqueda, case=False, na=False) |
+            df.get("DESCRIPCIÓN", pd.Series(["" for _ in range(len(df))])).astype(str).str.contains(busqueda, case=False, na=False)
+        ]
+        st.dataframe(filtro, height=200)
+        lista_partes = sorted(filtro["NO. DE PARTE"].dropna().unique())
+    else:
+        lista_partes = sorted(df["NO. DE PARTE"].dropna().unique())
 
-        if busqueda:
-            # Filtrar el DataFrame por coincidencia en las columnas principales
-            filtro = df[
-                df["NO. DE PARTE"].astype(str).str.contains(busqueda, case=False, na=False) |
-                df.get("MODELO", pd.Series(["" for _ in range(len(df))])).astype(str).str.contains(busqueda, case=False, na=False) |
-                df.get("DESCRIPCIÓN", pd.Series(["" for _ in range(len(df))])).astype(str).str.contains(busqueda, case=False, na=False)
-            ]
-            st.dataframe(filtro, height=200)
-            lista_partes = sorted(filtro["NO. DE PARTE"].dropna().unique())
-        else:
-            lista_partes = sorted(df["NO. DE PARTE"].dropna().unique())
-
+    if lista_partes:
         numero_parte = st.selectbox("Selecciona No. de Parte", lista_partes)
 
-        # Parámetros de cálculo
         descuento_fab = st.slider("Descuento del fabricante (%)", 0, 60, 30)
         cotizador.descuento_fabricante = descuento_fab / 100
 
@@ -229,9 +237,6 @@ if archivo:
         else:
             precio_objetivo = st.number_input("Precio objetivo (MXN)", min_value=0.0, step=1.0)
 
-        # -------------------------
-        # Calcular
-        # -------------------------
         if st.button("Calcular Precio Final"):
             resultado = cotizador.calcular_precio(
                 numero_parte=numero_parte,
@@ -256,6 +261,5 @@ if archivo:
                     st.error(resultado["ALERTA"])
                 else:
                     st.success("Precio válido y dentro de rango comercial.")
-                # Guardar cotización en la base de datos
                 db.guardar_cotizacion(resultado, usuario="streamlit")
 
