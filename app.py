@@ -150,7 +150,15 @@ class CotizadorKarcher:
         if producto.empty:
             return {"error": "Producto no encontrado"}
 
-        precio_lista = float(producto["PRECIO_LISTA"].values[0])
+        try:
+            precio_valor = producto["PRECIO_LISTA"].values[0]
+            # Limpiar el valor: eliminar signos de moneda, comas, espacios
+            if isinstance(precio_valor, str):
+                precio_valor = precio_valor.replace('$', '').replace(',', '').replace(' ', '').strip()
+            precio_lista = float(precio_valor)
+        except (ValueError, TypeError) as e:
+            return {"error": f"Error al convertir precio: {precio_valor} - {str(e)}"}
+
         costo_base = precio_lista * (1 - self.descuento_fabricante)
 
         # Cálculo por margen
