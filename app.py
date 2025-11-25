@@ -200,7 +200,7 @@ if os.path.exists(default_xlsx):
 else:
     st.error(f"No se encontró el archivo de lista de precios '{default_xlsx}' en el repositorio.")
 
-# Mostrar cotizador y buscador dinámico siempre
+# Mostrar cotizador y buscador dinámico
 if df is not None:
     st.markdown("### 🔍 Buscar y cotizar producto")
     busqueda = st.text_input("Buscar por No. de Parte, Modelo o Descripción")
@@ -219,7 +219,7 @@ if df is not None:
     if lista_partes:
         numero_parte = st.selectbox("Selecciona No. de Parte", lista_partes)
 
-        descuento_fab = st.slider("Descuento del fabricante (%)", 0, 60, 30)
+        descuento_fab = st.number_input("Descuento del fabricante (%)", min_value=0.0, max_value=100.0, value=30.0, step=1.0)
         cotizador.descuento_fabricante = descuento_fab / 100
 
         modo = st.radio("Método de cálculo:", ["Margen sobre costo", "Precio objetivo"])
@@ -228,65 +228,7 @@ if df is not None:
         precio_objetivo = None
 
         if modo == "Margen sobre costo":
-            margen = st.slider("Margen deseado (%)", 5, 80, 25) / 100
-        else:
-            precio_objetivo = st.number_input("Precio objetivo (MXN)", min_value=0.0, step=1.0)
-
-        if st.button("Calcular Precio Final"):
-            resultado = cotizador.calcular_precio(
-                numero_parte=numero_parte,
-                margen_sobre_costo=margen,
-                precio_objetivo=precio_objetivo
-            )
-
-            st.subheader("Resultado de Cálculo")
-
-            if "error" in resultado:
-                st.error(resultado["error"])
-            else:
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Precio Lista", f"${resultado['PRECIO_LISTA']:,}")
-                col2.metric("Costo Base", f"${resultado['COSTO_BASE']:,}")
-                col3.metric("Precio Final", f"${resultado['PRECIO_FINAL']:,}")
-                col4.metric("Margen Real (%)", f"{resultado['MARGEN_REAL_COSTO']}%")
-
-                st.write(f"**Descuento visible sobre lista:** {resultado['DESCUENTO_VISIBLE']}%")
-
-                if resultado.get("ALERTA"):
-                    st.error(resultado["ALERTA"])
-                else:
-                    st.success("Precio válido y dentro de rango comercial.")
-                db.guardar_cotizacion(resultado, usuario="streamlit")
-
-# Buscador dinámico de inicio si hay lista cargada
-if df is not None:
-    st.markdown("### 🔍 Buscar y cotizar producto")
-    busqueda = st.text_input("Buscar por No. de Parte, Modelo o Descripción")
-
-    if busqueda:
-        filtro = df[
-            df["NO. DE PARTE"].astype(str).str.contains(busqueda, case=False, na=False) |
-            df.get("MODELO", pd.Series(["" for _ in range(len(df))])).astype(str).str.contains(busqueda, case=False, na=False) |
-            df.get("DESCRIPCIÓN", pd.Series(["" for _ in range(len(df))])).astype(str).str.contains(busqueda, case=False, na=False)
-        ]
-        st.dataframe(filtro, height=200)
-        lista_partes = sorted(filtro["NO. DE PARTE"].dropna().unique())
-    else:
-        lista_partes = sorted(df["NO. DE PARTE"].dropna().unique())
-
-    if lista_partes:
-        numero_parte = st.selectbox("Selecciona No. de Parte", lista_partes)
-
-        descuento_fab = st.slider("Descuento del fabricante (%)", 0, 60, 30)
-        cotizador.descuento_fabricante = descuento_fab / 100
-
-        modo = st.radio("Método de cálculo:", ["Margen sobre costo", "Precio objetivo"])
-
-        margen = None
-        precio_objetivo = None
-
-        if modo == "Margen sobre costo":
-            margen = st.slider("Margen deseado (%)", 5, 80, 25) / 100
+            margen = st.number_input("Margen deseado (%)", min_value=0.0, max_value=100.0, value=25.0, step=1.0) / 100
         else:
             precio_objetivo = st.number_input("Precio objetivo (MXN)", min_value=0.0, step=1.0)
 
