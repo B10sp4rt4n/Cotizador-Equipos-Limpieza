@@ -3,283 +3,114 @@ import pandas as pd
 import sqlite3
 from datetime import datetime
 import os
+from io import BytesIO
 
 # ============================================================
-#  MODULO STREAMLIT - COTIZADOR KARCHER
+# CONFIGURACIÓN DE PÁGINA
 # ============================================================
-
 st.set_page_config(
     page_title="Cotizador Karcher - SynAppsSys",
     layout="wide"
 )
 
-# ============================================================
-#  Clase de cálculo (mismo motor que el prototipo)
-# ============================================================
-
-############################################################
-#   BASE SQLITE
-############################################################
-
-class DBKarcher:
-    def __init__(self, db_path="cotizador_karcher.db"):
-        self.db_path = db_path
-        self.conn = sqlite3.connect(self.db_path, check_same_thread=False)
-        self.cursor = self.conn.cursor()
-        self._create_tables()
-
-    def _create_tables(self):
-        # Catálogo de productos
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS productos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                numero_parte TEXT UNIQUE,
-                modelo TEXT,
-                descripcion TEXT,
-                precio_lista REAL
-            )
-        """)
-
-        # Cotizaciones generadas
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS cotizaciones (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                numero_parte TEXT,
-                precio_lista REAL,
-                costo_base REAL,
-                precio_final REAL,
-                margen_real REAL,
-                descuento_visible REAL,
-                usuario TEXT,
-                timestamp TEXT
-            )
-        """)
-
-        # Auditoría estructural
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS auditoria (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                accion TEXT,
-                detalle TEXT,
-                usuario TEXT,
-                timestamp TEXT
-            )
-        """)
-
-        self.conn.commit()
-
-    # ---------------------------------------------------------
-    #   CARGA DE CATÁLOGO
-    # ---------------------------------------------------------
-    def cargar_catalogo(self, df, usuario="system"):
-        for _, row in df.iterrows():
-            try:
-                self.cursor.execute("""
-                    INSERT OR REPLACE INTO productos (numero_parte, modelo, descripcion, precio_lista)
-                    VALUES (?, ?, ?, ?)
-                """, (
-                    str(row["NO. DE PARTE"]).strip(),
-                    str(row.get("MODELO", "")),
-                    str(row.get("DESCRIPCIÓN", "")),
-                    float(row["PRECIO_LISTA"])
-                ))
-            except Exception as e:
-                print("Error guardando:", e)
-
-        self.conn.commit()
-        self.registrar_auditoria("CARGA_CATALOGO", f"{len(df)} productos cargados", usuario)
-
-    # ---------------------------------------------------------
-    #   ALMACENAR COTIZACIÓN
-    # ---------------------------------------------------------
-    def guardar_cotizacion(self, datos, usuario="system"):
-        self.cursor.execute("""
-            INSERT INTO cotizaciones (numero_parte, precio_lista, costo_base, precio_final,
-                                      margen_real, descuento_visible, usuario, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            datos["NO_PARTE"],
-            datos["PRECIO_LISTA"],
-            datos["COSTO_BASE"],
-            datos["PRECIO_FINAL"],
-            datos["MARGEN_REAL_COSTO"],
-            datos["DESCUENTO_VISIBLE"],
-            usuario,
-            datetime.now().isoformat()
-        ))
-        self.conn.commit()
-
-    def registrar_auditoria(self, accion, detalle, usuario="system"):
-        self.cursor.execute("""
-            INSERT INTO auditoria (accion, detalle, usuario, timestamp)
-            VALUES (?, ?, ?, ?)
-        """, (accion, detalle, usuario, datetime.now().isoformat()))
-        self.conn.commit()
-class CotizadorKarcher:
-    def __init__(self, descuento_fabricante=0.30):
-        self.descuento_fabricante = descuento_fabricante
-        self.df = None
-
-    def cargar_archivo(self, archivo):
-        try:
-            df = pd.read_excel(archivo)
-            df = df.rename(columns=lambda x: str(x).strip().replace('\n', ' ').upper())
-            # Intentar múltiples variantes de nombres de columna para precio
-            if "PRECIO MXN" in df.columns:
-                df = df.rename(columns={"PRECIO MXN": "PRECIO_LISTA"})
-            elif "PRECIO" in df.columns:
-                df = df.rename(columns={"PRECIO": "PRECIO_LISTA"})
-            elif "PRICE" in df.columns:
-                df = df.rename(columns={"PRICE": "PRECIO_LISTA"})
-            
-            # Verificar que existan las columnas necesarias
-            if "PRECIO_LISTA" not in df.columns:
-                st.error(f"No se encontró la columna de precio. Columnas disponibles: {list(df.columns)}")
-                return None
-            
-            self.df = df
-            return df
-        except Exception as e:
-            st.error(f"Error al cargar archivo: {e}")
-            return None
-
-    def calcular_precio(self, numero_parte, margen_sobre_costo=None, precio_objetivo=None):
-        df = self.df
-        producto = df[df["NO. DE PARTE"] == numero_parte]
-
-        if producto.empty:
-            return {"error": "Producto no encontrado"}
-
-        try:
-            precio_valor = producto["PRECIO_LISTA"].values[0]
-            # Limpiar el valor: eliminar signos de moneda, comas, espacios
-            if isinstance(precio_valor, str):
-                precio_valor = precio_valor.replace('$', '').replace(',', '').replace(' ', '').strip()
-            precio_lista = float(precio_valor)
-        except (ValueError, TypeError) as e:
-            return {"error": f"Error al convertir precio: {precio_valor} - {str(e)}"}
-
-        costo_base = precio_lista * (1 - self.descuento_fabricante)
-
-        # Cálculo por margen
-        if margen_sobre_costo is not None:
-            # Margen sobre precio final: Precio Final = Costo / (1 - Margen)
-            precio_final = costo_base / (1 - margen_sobre_costo)
-
-        # Cálculo por precio objetivo
-        elif precio_objetivo is not None:
-            precio_final = precio_objetivo
-
-        else:
-            return {"error": "Debes especificar margen_sobre_costo o precio_objetivo"}
-
-        # Calcular métricas reales
-        margen_real_sobre_precio = ((precio_final - costo_base) / precio_final) * 100 if precio_final > 0 else 0
-        margen_real_sobre_costo = ((precio_final - costo_base) / costo_base) * 100 if costo_base > 0 else 0
-        descuento_visible = 1 - (precio_final / precio_lista)
-
-        alerta = None
-        if precio_final < costo_base:
-            alerta = "PRECIO POR DEBAJO DEL COSTO (NO PERMITIDO)"
-
-        return {
-            "NO_PARTE": numero_parte,
-            "PRECIO_LISTA": precio_lista,
-            "COSTO_BASE": round(costo_base, 2),
-            "PRECIO_FINAL": round(precio_final, 2),
-            "MARGEN_REAL_PRECIO": round(margen_real_sobre_precio, 2),
-            "MARGEN_REAL_COSTO": round(margen_real_sobre_costo, 2),
-            "DESCUENTO_VISIBLE": round(descuento_visible * 100, 2),
-            "ALERTA": alerta
-        }
+st.title("🟡 Cotizador Karcher - SynAppsSys (AUP-EXO)")
+st.markdown("Sistema de selección jerárquica basado en tu estructura A → B → C.")
 
 
 # ============================================================
-#  INTERFAZ STREAMLIT
+# CARGA DEL EXCEL TAL CUAL (SIN MODIFICAR NOMBRES)
 # ============================================================
 
-st.title("🟡 Cotizador Karcher - SynAppsSys (Prototipo AUP-EXO)")
-st.markdown("Carga la lista de precios de Karcher y genera cotizaciones con reglas inteligentes.")
+EXCEL_PATH = "LP Div Prof Hoja 2 Sep25.xlsx"
+
+if not os.path.exists(EXCEL_PATH):
+    st.error(f"No se encontró el archivo: {EXCEL_PATH}")
+    st.stop()
+
+df = pd.read_excel(EXCEL_PATH)
+df.columns = [c.strip() for c in df.columns]  # Limpieza ligera
+
+# Asegurar que las columnas existan
+columnas_requeridas = ["CATEGORIA", "CLASE", "MODELO", "NO. DE PARTE", "DESCRIPCIÓN", "PRECIO MXN"]
+
+for col in columnas_requeridas:
+    if col not in df.columns:
+        st.error(f"Falta la columna requerida en el Excel: {col}")
+        st.stop()
+
+# Convertir precios a número si vienen como texto
+df["PRECIO"] = (
+    df["PRECIO MXN"]
+    .astype(str)
+    .str.replace("$", "")
+    .str.replace(",", "")
+    .str.strip()
+    .astype(float)
+)
+
+# ============================================================
+# DROPDOWNS A → B → C
+# ============================================================
+
+st.subheader("🔽 Selección jerárquica")
+
+# 1. Dropdown A
+categorias = sorted(df["CATEGORIA"].dropna().unique())
+sel_A = st.selectbox("Selecciona CATEGORIA", categorias)
+
+dfA = df[df["CATEGORIA"] == sel_A]
+
+# 2. Dropdown B
+clases = sorted(dfA["CLASE"].dropna().unique())
+sel_B = st.selectbox("Selecciona CLASE", clases)
+
+dfB = dfA[dfA["CLASE"] == sel_B]
+
+# 3. Dropdown C
+modelos = sorted(dfB["MODELO"].dropna().unique())
+sel_C = st.selectbox("Selecciona MODELO", modelos)
+
+dfC = dfB[dfB["MODELO"] == sel_C]
+
+st.write("### Resultado filtrado:")
+st.dataframe(dfC, height=250)
+
+# ============================================================
+# CALCULADORA DE PRECIOS (OPCIONAL)
+# ============================================================
+
+if not dfC.empty:
+    producto = dfC.iloc[0]
+    precio_lista = producto["PRECIO"]
+    no_parte = producto["NO. DE PARTE"]
+    descripcion = producto["DESCRIPCIÓN"]
+
+    st.subheader("🧮 Cálculo de Precio")
+    st.write(f"**Producto:** {sel_C}")
+    st.write(f"**SKU:** {no_parte}")
+    st.write(f"**Descripción:** {descripcion}")
+    st.write(f"**Precio lista:** ${precio_lista:,.2f}")
+
+    descuento = st.slider("Descuento (%)", 0, 80, 30)
+    precio_final = precio_lista * (1 - descuento / 100)
+
+    st.metric("Precio Final", f"${precio_final:,.2f}", f"-{descuento}%")
+
+    st.success("Cálculo realizado correctamente.")
 
 
-# Instancia de la base de datos
-db = DBKarcher()
-cotizador = CotizadorKarcher()
+# ============================================================
+# EXPORTADOR
+# ============================================================
 
-# -------------------------
-# Subir archivo
-# -------------------------
+buffer = BytesIO()
+with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
+    dfC.to_excel(writer, index=False, sheet_name='Selección')
 
-
-# Cargar automáticamente el archivo Excel del repositorio en la nube
-default_xlsx = "LP Div Prof Hoja 2 Sep25.xlsx"
-df = None
-
-if os.path.exists(default_xlsx):
-    df = cotizador.cargar_archivo(default_xlsx)
-    if df is not None:
-        st.success(f"Lista de precios cargada: {default_xlsx}")
-        st.dataframe(df, height=300)
-        db.cargar_catalogo(df, usuario="auto-repo")
-else:
-    st.error(f"No se encontró el archivo de lista de precios '{default_xlsx}' en el repositorio.")
-
-# Mostrar cotizador y buscador dinámico
-if df is not None:
-    st.markdown("### 🔍 Buscar y cotizar producto")
-    busqueda = st.text_input("Buscar por No. de Parte, Modelo o Descripción")
-
-    if busqueda:
-        filtro = df[
-            df["NO. DE PARTE"].astype(str).str.contains(busqueda, case=False, na=False) |
-            df.get("MODELO", pd.Series(["" for _ in range(len(df))])).astype(str).str.contains(busqueda, case=False, na=False) |
-            df.get("DESCRIPCIÓN", pd.Series(["" for _ in range(len(df))])).astype(str).str.contains(busqueda, case=False, na=False)
-        ]
-        st.dataframe(filtro, height=200)
-        lista_partes = sorted(filtro["NO. DE PARTE"].dropna().unique())
-    else:
-        lista_partes = sorted(df["NO. DE PARTE"].dropna().unique())
-
-    if lista_partes:
-        numero_parte = st.selectbox("Selecciona No. de Parte", lista_partes)
-
-        descuento_fab = st.number_input("Descuento del fabricante (%)", min_value=0.0, max_value=100.0, value=30.0, step=1.0)
-        cotizador.descuento_fabricante = descuento_fab / 100
-
-        modo = st.radio("Método de cálculo:", ["Margen sobre precio", "Precio objetivo"])
-
-        margen = None
-        precio_objetivo = None
-
-        if modo == "Margen sobre precio":
-            margen = st.number_input("Margen deseado (%)", min_value=0.0, max_value=100.0, value=25.0, step=1.0) / 100
-        else:
-            precio_objetivo = st.number_input("Precio objetivo (MXN)", min_value=0.0, step=1.0)
-
-        if st.button("Calcular Precio Final"):
-            resultado = cotizador.calcular_precio(
-                numero_parte=numero_parte,
-                margen_sobre_costo=margen,
-                precio_objetivo=precio_objetivo
-            )
-
-            st.subheader("Resultado de Cálculo")
-
-            if "error" in resultado:
-                st.error(resultado["error"])
-            else:
-                col1, col2, col3, col4 = st.columns(4)
-                col1.metric("Precio Lista", f"${resultado['PRECIO_LISTA']:,}")
-                col2.metric("Costo Base", f"${resultado['COSTO_BASE']:,}")
-                col3.metric("Precio Final", f"${resultado['PRECIO_FINAL']:,}")
-                col4.metric("Margen s/Precio (%)", f"{resultado['MARGEN_REAL_PRECIO']}%")
-
-                st.write(f"**Margen sobre costo:** {resultado['MARGEN_REAL_COSTO']}%")
-                st.write(f"**Descuento visible sobre lista:** {resultado['DESCUENTO_VISIBLE']}%")
-
-                if resultado.get("ALERTA"):
-                    st.error(resultado["ALERTA"])
-                else:
-                    st.success("Precio válido y dentro de rango comercial.")
-                db.guardar_cotizacion(resultado, usuario="streamlit")
+st.download_button(
+    label="⬇ Descargar selección como Excel",
+    data=buffer.getvalue(),
+    file_name=f"Seleccion_{sel_C.replace(' ', '_')}.xlsx",
+    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+)
 
